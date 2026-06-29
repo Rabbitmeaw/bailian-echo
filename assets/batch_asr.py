@@ -2,17 +2,18 @@
 """
 批量视频 ASR 转写工具
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-基于阿里云百炼 CLI (bl speech recognize / fun-asr)，
+支持双后端：阿里云百炼 (fun-asr) / 火山引擎方舟 (doubao-seed-asr)
 遍历指定文件夹中的视频文件，逐一转写为文字，
 最终输出 Excel (.xlsx) 或 CSV 文件。
 
 用法:
     python3 batch_asr.py --folder /path/to/videos
+    python3 batch_asr.py --folder /path/to/videos --backend ark
     python3 batch_asr.py --folder /path/to/videos --format csv
     python3 batch_asr.py --folder /path/to/videos --output /path/to/result.xlsx
 
 依赖:
-    - bl (bailian-cli) 已安装并已鉴权
+    - bl (bailian-cli) 或 arkcli (@volcengine/ark-cli) 已安装并已鉴权
     - Python 3.8+ / openpyxl
 """
 
@@ -33,8 +34,38 @@ VIDEO_EXTENSIONS = {
     '.ogv', '.mpg', '.mpeg', '.rmvb', '.asf', '.vob',
 }
 
-# ── ASR 超时 (秒)，大视频可能需要较长时间
+# ── ASR 超时 (秒) ────────────────────────────────────────
 ASR_TIMEOUT = 900
+
+
+# ═══════════════════════════════════════════════════════════════
+# 后端定义
+# ═══════════════════════════════════════════════════════════════
+
+BACKENDS = {
+    'bl': {
+        'name': '阿里云百炼 (fun-asr)',
+        'cli': 'bl',
+        'install_cmd': 'npm install -g bailian-cli',
+        'skills_cmd': 'npx skills add modelstudioai/cli --all -g',
+        'auth_env': 'DASHSCOPE_API_KEY',
+        'auth_check_cmd': ['bl', 'auth', 'status', '--output', 'json'],
+        'auth_login_console': ['bl', 'auth', 'login', '--console'],
+        'auth_login_apikey': 'bl auth login --api-key',
+        'api_key_url': 'https://bailian.console.aliyun.com/cn-beijing/?tab=app#/api-key',
+    },
+    'ark': {
+        'name': '火山引擎方舟 (doubao-seed-asr)',
+        'cli': 'arkcli',
+        'install_cmd': 'npm install -g @volcengine/ark-cli@latest',
+        'skills_cmd': 'arkcli +connect',
+        'auth_env': 'ARK_API_KEY',
+        'auth_check_cmd': ['arkcli', 'auth', 'status', '--format', 'json'],
+        'auth_login_console': ['arkcli', 'auth', 'login'],
+        'auth_login_apikey': 'arkcli auth login --api-key',
+        'api_key_url': 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+    },
+}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -46,14 +77,8 @@ def get_file_size_mb(filepath: str) -> float:
     return os.path.getsize(filepath) / (1024 * 1024)
 
 
-def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
-    """
-    调用 bl speech recognize 转写单个文件。
-
-    返回 (text, duration_seconds, error)。
-    成功时 text 为转写全文，duration_seconds 为音频时长，error 为 None；
-    失败时 text/duration 为 None，error 为错误信息。
-    """
+def run_asr_bl(filepath: str) -> tuple[str | None, float | None, str | None]:
+    """百炼 fun-asr 转写，返回 (text, duration_s, error)。"""
     with tempfile.NamedTemporaryFile(
         suffix='.json', prefix='asr_', delete=False
     ) as tmp:
@@ -67,15 +92,12 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
         )
 
         if result.returncode != 0:
-            # 尝试从 stderr 提取有用信息
             err = result.stderr.strip() or result.stdout.strip()
             return None, None, err[:500] if err else f'退出码 {result.returncode}'
 
-        # 读取结构化 JSON
         with open(tmp_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        # 音频时长从 ASR 返回的 JSON 中获取（无需 ffprobe）
         props = data.get('properties', {})
         duration_ms = props.get('original_duration_in_milliseconds')
         duration_s = duration_ms / 1000.0 if duration_ms else None
@@ -84,7 +106,6 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
         if not transcripts:
             return None, duration_s, 'ASR 返回了空结果（可能文件中没有语音）'
 
-        # 合并所有 channel 的文本
         texts = [t.get('text', '') for t in transcripts]
         full_text = '\n'.join(texts).strip()
 
@@ -100,11 +121,71 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
     except Exception as e:
         return None, None, f'未知错误: {e}'
     finally:
-        # 清理临时 JSON 文件
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def run_asr_ark(filepath: str) -> tuple[str | None, float | None, str | None]:
+    """火山方舟 doubao-seed-asr 转写，返回 (text, duration_s, error)。"""
+    try:
+        result = subprocess.run(
+            ['arkcli', '+understand', 'asr',
+             '--input', f'@{filepath}',
+             '--format', 'json',
+             '--no-progress'],
+            capture_output=True, text=True, timeout=ASR_TIMEOUT,
+        )
+
+        if result.returncode != 0:
+            err = result.stderr.strip() or result.stdout.strip()
+            return None, None, err[:500] if err else f'退出码 {result.returncode}'
+
+        # 解析 Responses API JSON 输出
+        raw = result.stdout.strip()
+        if not raw:
+            return None, None, 'ASR 返回了空响应'
+
+        data = json.loads(raw)
+
+        # 从 Responses API 结构中提取文本
+        # 格式: {"output": [{"content": [{"text": "..."}]}], ...}
+        text = ''
+        duration_s = None
+
+        output_list = data.get('output', [])
+        for item in output_list:
+            for content_item in item.get('content', []):
+                if content_item.get('type') == 'output_text':
+                    text += content_item.get('text', '') + '\n'
+
+        text = text.strip()
+
+        # 尝试从 usage 或其他字段获取时长
+        usage = data.get('usage', {})
+        if usage:
+            duration_ms = usage.get('audio_duration_ms') or usage.get('input_audio_duration_ms')
+            if duration_ms:
+                duration_s = duration_ms / 1000.0
+
+        if not text:
+            return None, duration_s, 'ASR 返回了空文本（可能文件中没有语音）'
+
+        return text, duration_s, None
+
+    except subprocess.TimeoutExpired:
+        return None, None, f'ASR 处理超时 (>{ASR_TIMEOUT}s)'
+    except json.JSONDecodeError as e:
+        return None, None, f'JSON 解析失败: {e}'
+    except Exception as e:
+        return None, None, f'未知错误: {e}'
+
+
+RUN_ASR = {
+    'bl': run_asr_bl,
+    'ark': run_asr_ark,
+}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -127,7 +208,6 @@ def save_xlsx(results: list[dict], output_path: str) -> None:
     ws = wb.active
     ws.title = 'ASR转写结果'
 
-    # ── 表头样式 ──
     header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF', size=11)
     header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
     header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -138,14 +218,12 @@ def save_xlsx(results: list[dict], output_path: str) -> None:
         cell.fill = header_fill
         cell.alignment = header_align
 
-    # ── 数据行 ──
     fail_font = Font(color='FF0000', bold=True)
     success_font = Font(color='006100')
 
     for row_idx, entry in enumerate(results, 2):
         for col_idx, name in enumerate(FIELD_NAMES, 1):
             value = entry[name]
-            # 时长格式化为 2 位小数
             if name == '时长(秒)' and value is not None:
                 value = round(value, 2)
             elif name == '文件大小(MB)' and value is not None:
@@ -160,7 +238,6 @@ def save_xlsx(results: list[dict], output_path: str) -> None:
                 elif value == '成功':
                     cell.font = success_font
 
-    # ── 列宽 ──
     col_widths = {
         '文件名': 42, '文件路径': 64, '时长(秒)': 11,
         '文件大小(MB)': 13, '完整文本': 72, '处理状态': 10,
@@ -169,12 +246,8 @@ def save_xlsx(results: list[dict], output_path: str) -> None:
     for col, name in enumerate(FIELD_NAMES, 1):
         ws.column_dimensions[get_column_letter(col)].width = col_widths.get(name, 14)
 
-    # ── 冻结首行 ──
     ws.freeze_panes = 'A2'
-
-    # ── 自动筛选 ──
     ws.auto_filter.ref = f'A1:{get_column_letter(len(FIELD_NAMES))}{len(results) + 1}'
-
     wb.save(output_path)
 
 
@@ -185,7 +258,6 @@ def save_csv(results: list[dict], output_path: str) -> None:
         writer = csv.DictWriter(f, fieldnames=FIELD_NAMES, extrasaction='ignore')
         writer.writeheader()
         for entry in results:
-            # 数值格式化
             row = dict(entry)
             if row.get('时长(秒)') is not None:
                 row['时长(秒)'] = round(row['时长(秒)'], 2)
@@ -198,22 +270,25 @@ def save_csv(results: list[dict], output_path: str) -> None:
 # 主流程
 # ═══════════════════════════════════════════════════════════════
 
-def generate_output_name(folder: Path, fmt: str) -> str:
+def generate_output_name(folder: Path, backend: str, fmt: str) -> str:
     """生成输出文件名。"""
     folder_name = folder.name or folder.parts[-1] if len(folder.parts) > 1 else 'videos'
-    # 清理文件夹名中的特殊字符
     safe_name = folder_name.replace(' ', '_')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f'ASR转写结果_{safe_name}_{timestamp}.{fmt}'
+    return f'ASR转写结果_{safe_name}_{backend}_{timestamp}.{fmt}'
 
 
-def process_folder(folder_path: str, output_format: str = 'xlsx',
+def process_folder(folder_path: str, backend: str = 'bl',
+                   output_format: str = 'xlsx',
                    output_path: str | None = None) -> None:
     """处理文件夹中的所有视频文件。"""
     folder = Path(folder_path).resolve()
     if not folder.is_dir():
         print(f'❌ 错误：{folder_path} 不是有效目录')
         sys.exit(1)
+
+    backend_info = BACKENDS[backend]
+    run_asr_fn = RUN_ASR[backend]
 
     # ── 收集视频文件 (不递归子目录) ──
     video_files: list[Path] = []
@@ -228,24 +303,24 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
 
     # ── 确定输出路径 ──
     if output_path is None:
-        output_name = generate_output_name(folder, output_format)
+        output_name = generate_output_name(folder, backend, output_format)
         output_path = str(folder / output_name)
     else:
         output_path = str(Path(output_path).resolve())
 
     # ── 逐个处理 ──
     total = len(video_files)
-    print(f'\n📁 文件夹 : {folder}')
-    print(f'🎬 视频数量: {total}')
-    print(f'📄 输出格式: {output_format.upper()}')
-    print(f'📝 输出文件: {output_path}')
+    print(f'\n📁 文件夹   : {folder}')
+    print(f'🎬 视频数量 : {total}')
+    print(f'🔧 后端引擎 : {backend_info["name"]}')
+    print(f'📄 输出格式 : {output_format.upper()}')
+    print(f'📝 输出文件 : {output_path}')
     print(f'{"─" * 60}\n')
 
     results: list[dict] = []
     overall_start = time.time()
 
     for idx, filepath in enumerate(video_files, 1):
-        # 进度行
         progress = f'[{idx}/{total}]'
         print(f'{progress} {filepath.name}', end=' ', flush=True)
 
@@ -262,11 +337,9 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
 
         task_start = time.time()
 
-        # ── 获取文件大小 ──
         entry['文件大小(MB)'] = round(get_file_size_mb(str(filepath)), 2)
 
-        # ── ASR 转写（时长从 ASR 返回的 JSON 中提取，无需 ffprobe）──
-        text, duration_s, error = run_asr(str(filepath))
+        text, duration_s, error = run_asr_fn(str(filepath))
         elapsed = round(time.time() - task_start, 1)
         entry['处理耗时(秒)'] = elapsed
         entry['时长(秒)'] = round(duration_s, 2) if duration_s else None
@@ -310,18 +383,27 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
 
 def main():
     parser = argparse.ArgumentParser(
-        description='批量视频 ASR 转写 — 基于阿里云百炼 fun-asr',
+        description='批量视频 ASR 转写 — 支持百炼 fun-asr / 火山方舟 doubao-seed-asr',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   python3 batch_asr.py --folder ~/Videos/interviews
-  python3 batch_asr.py --folder ~/Videos/meetings --format csv
+  python3 batch_asr.py --folder ~/Videos/meetings --backend ark
+  python3 batch_asr.py --folder ~/Videos/demo --format csv
   python3 batch_asr.py --folder ~/Videos/demo --output ~/reports/demo.xlsx
+
+后端的值:
+  bl  - 阿里云百炼 fun-asr (默认)
+  ark - 火山引擎方舟 doubao-seed-asr
         """.strip(),
     )
     parser.add_argument(
         '--folder', '-f', required=True,
         help='视频文件夹路径 (不递归子目录)',
+    )
+    parser.add_argument(
+        '--backend', '-b', choices=['bl', 'ark'], default='bl',
+        help='ASR 后端引擎: bl=百炼(默认), ark=火山方舟',
     )
     parser.add_argument(
         '--format', '-fmt', choices=['xlsx', 'csv'], default='xlsx',
@@ -335,6 +417,7 @@ def main():
 
     process_folder(
         folder_path=args.folder,
+        backend=args.backend,
         output_format=args.format,
         output_path=args.output,
     )

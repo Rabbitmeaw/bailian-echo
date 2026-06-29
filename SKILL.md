@@ -1,23 +1,40 @@
 ---
 name: bailian-echo
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   requires:
-    - bailian-cli (>= 1.4.0, 已鉴权)
     - Python 3.8+ / openpyxl
+    - 至少一个 ASR 后端:
+      - bailian-cli (>= 1.4.0, 已鉴权) 或
+      - @volcengine/ark-cli (已鉴权)
 description: >-
-  Batch video/audio speech-to-text using Aliyun Model Studio fun-asr.
+  Batch video/audio speech-to-text with dual backend: Aliyun Bailian fun-asr + Volcengine Ark doubao-seed-asr.
   Processes a folder of video files and outputs structured Excel (.xlsx) or CSV.
   Handles file upload, ASR, timing, error tracking — end to end.
   Trigger when user says: "批量转写", "语音转文字", "ASR", "视频转文字",
   "字幕提取", "转写这个文件夹", "transcribe videos", "batch ASR",
   or provides a folder path with video files and mentions transcription.
+  Backends: 百炼 fun-asr (bl) and 火山方舟 doubao-seed-asr (ark).
+  Treat both backends equally. If user doesn't specify, ask which one.
 ---
 
-# 批量视频 ASR 转写 (bailian-batch-asr)
+# 批量视频 ASR 转写 (bailian-echo)
 
-基于阿里云百炼 CLI `bl speech recognize` (fun-asr) 的批量语音转文字工具。
+双后端批量语音转文字工具，平权对待：
+- **bl**：阿里云百炼 `fun-asr`
+- **ark**：火山引擎方舟 `doubao-seed-asr`
+
 遍历视频文件夹，逐文件转写，输出结构化 Excel / CSV。
+
+## 后端选择
+
+Agent 按以下规则确定后端：
+
+| 用户说法 | → 后端 |
+|----------|--------|
+| "百炼"、"bailian"、"bl" | `bl` |
+| "火山"、"ark"、"arkcli"、"方舟"、"豆包" | `ark` |
+| 未指定 | **主动询问用户选择哪个**（列出两个选项，不默认偏袒） |
 
 ---
 
@@ -41,88 +58,72 @@ npm -v
 
 未安装或不可用：Agent 安装或修复 npm。**禁止**用 pnpm / yarn 安装 bailian-cli。
 
-### 0.3 百炼 CLI
+### 0.3 后端 CLI
+
+根据用户选择，安装对应的 CLI：
 
 ```bash
-bl --version
-```
+# bl 后端
+bl --version || npm install -g bailian-cli
 
-未安装：执行 `npm install -g bailian-cli`。
-已安装但版本过低：执行 `npm update -g bailian-cli`。
+# ark 后端
+arkcli --version || npm install -g @volcengine/ark-cli@latest
+```
 
 校验：
 ```bash
-bl --version
-which bl        # Windows: where bl
+<cli> --version
+which <cli>        # Windows: where <cli>
 ```
 
-若 `command not found`：检查全局 bin 是否在 PATH（`npm config get prefix`，其下 `bin` 目录应加入 PATH）。
-
-### 0.4 百炼 Skills
+### 0.4 后端 Skills
 
 ```bash
+# bl 后端
 npx skills add modelstudioai/cli --all -g
+
+# ark 后端
+arkcli +connect
 ```
 
-即使本机已有 bailian-cli skill，也执行一次以确保版本最新。
+### 0.5 鉴权
 
-### 0.5 鉴权（必做，否则无法调用 API）
+ASR 转写的本质依赖是 **API Key**。两个后端的鉴权路径独立。
 
-ASR 转写的本质依赖是 **API Key**。百炼 CLI 读取优先级为：
+#### bl 后端鉴权
 
-```
---api-key 命令行参数  >  DASHSCOPE_API_KEY 环境变量  >  ~/.bailian/config.json
-```
+读取优先级：`--api-key` > `DASHSCOPE_API_KEY` > `~/.bailian/config.json`
 
-Agent 按以下顺序尝试，目标是**让用户用最少操作完成鉴权**：
+| Step | 操作 |
+|------|------|
+| 1. 检查 | `bl auth status --output json` → `api_key.configured: true` 则跳过 |
+| 2. 浏览器 | `bl auth login --console`（30s 超时 → Step 3） |
+| 3. API Key | 引导用户从 [百炼控制台](https://bailian.console.aliyun.com/cn-beijing/?tab=app#/api-key) 获取 Key → `bl auth login --api-key <Key>` |
+| 4. 校验 | `bl auth status --output json` |
 
-#### Step 1：检查是否已有鉴权
+#### ark 后端鉴权
 
-```bash
-bl auth status --output json
-```
+读取优先级：`--api-key` > `ARK_API_KEY` > 本地 credential 文件
 
-若 `authenticated: true` 且 `api_key.configured: true` → 跳过鉴权。
+| Step | 操作 |
+|------|------|
+| 1. 检查 | `arkcli auth status --format json` → 已登录则跳过 |
+| 2. 浏览器 | `arkcli auth login`（30s 超时 → Step 3） |
+| 3. API Key | 引导用户从 [火山方舟控制台](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) 获取 Key → 告知用户设置 `ARK_API_KEY` 环境变量 |
+| 4. 校验 | `arkcli auth status --format json` |
 
-#### Step 2：首选 — 浏览器一键登录（适用 90% 新用户）
-
-Agent 主动尝试：
-
-```bash
-bl auth login --console
-```
-
-命令拉起浏览器 → 用户登录阿里云 → 自动写入 `~/.bailian/config.json`。**用户零复制粘贴**。
-
-> Agent 需要等待此命令完成（它会阻塞直到浏览器登录成功或超时）。若 30s 无响应或报错（无浏览器 / SSH / CI），立即改为 Step 3。
-
-#### Step 3：无浏览器环境 — 引导获取 API Key
-
-引导用户从 [百炼控制台](https://bailian.console.aliyun.com/cn-beijing/?tab=app#/api-key) 获取 Key，粘贴到对话中。Agent 收到后执行：
-
-```bash
-bl auth login --api-key <用户粘贴的Key>
-```
-
-**禁止**把 Key 写进回复正文、日志或文件。执行完毕后向用户确认「Key 已配置」，仅展示 `masked` 字段。
-
-#### Step 4：校验
-
-```bash
-bl auth status --output json
-```
-
-必须满足 `api_key.configured: true`。
+> **禁止**把 Key 写进回复正文、日志或文件。向用户汇报时仅展示 `masked` 字段。
 
 #### 进阶提示（Agent 完成鉴权后告知用户，非强制）
 
-如果用户希望凭证不落盘、或用于 CI/CD 环境，可以改为环境变量：
-
+如果用户希望凭证不落盘，可改为环境变量：
 ```bash
-export DASHSCOPE_API_KEY="<Key>"   # 写入 ~/.zshrc 持久化，或仅当前 shell
+# bl
+export DASHSCOPE_API_KEY="<Key>"
+# ark
+export ARK_API_KEY="<Key>"
 ```
-
-设置后 `bl` CLI 优先读环境变量，可删除 `~/.bailian/config.json` 中的 `api_key` 字段。
+写入 `~/.zshrc` 持久化。设置后 CLI 优先读环境变量。
 
 ### 0.6 Python openpyxl
 
@@ -154,6 +155,7 @@ echo "ALL CHECKS PASSED"
 | 参数 | 来源 | 默认值 |
 |------|------|--------|
 | `--folder` | 用户提供的文件夹路径 | **必填** |
+| `--backend` | 用户指定，未指定则询问 | **必问** |
 | `--format` | 用户明确说 "csv" → csv，否则 | xlsx |
 | `--output` | 用户指定的输出路径 | 自动生成（源文件夹内） |
 
@@ -165,6 +167,7 @@ echo "ALL CHECKS PASSED"
 ```bash
 python3 <skill_dir>/assets/batch_asr.py \
   --folder "<用户提供的文件夹路径>" \
+  --backend <bl|ark> \
   --format <xlsx|csv> \
   [--output "<用户指定路径>"]
 ```

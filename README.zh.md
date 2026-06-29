@@ -1,8 +1,8 @@
 # bailian-echo（百炼·回声）
 
-> 批量视频语音转文字 — 一个文件夹进，一份 Excel 出。
+> 批量视频语音转文字 — 双后端（百炼 + 火山方舟），一个文件夹进，一份 Excel 出。
 
-**bailian-echo** 是一个 Claude Code / Codex Skill，基于阿里云百炼 [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model) 模型，将视频文件夹批量转为结构化文字报表。从上传、转写、计时到异常处理，全链路自动化。
+**bailian-echo** 是一个 Claude Code / Codex Skill，支持阿里云百炼 [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model) 与火山方舟 [doubao-seed-asr](https://www.volcengine.com/docs/6561/1354868) 双后端。将视频文件夹批量转为结构化文字报表，上传、转写、计时、异常处理全链路自动化。
 
 ```
 📁 ~/Videos/会议录屏/
@@ -28,14 +28,16 @@
 | 依赖 | 安装命令 |
 |------|----------|
 | Node.js ≥ 22.12 | `brew install node` |
-| 百炼 CLI | `npm install -g bailian-cli` |
-| 百炼 Skills | `npx skills add modelstudioai/cli --all -g` |
 | Python openpyxl | `pip3 install openpyxl` |
+| **百炼 CLI** (bl) | `npm install -g bailian-cli` |
+| 百炼 Skills | `npx skills add modelstudioai/cli --all -g` |
+| **火山方舟 CLI** (arkcli) | `npm install -g @volcengine/ark-cli@latest` |
+| 方舟 Skills | `arkcli +connect` |
 
 ### 安装 Skill
 
 ```bash
-npx skills add <github-user>/bailian-echo --all -g
+npx skills add Rabbitmeaw/bailian-echo --all -g
 ```
 
 ### 鉴权
@@ -76,7 +78,7 @@ transcribe all videos in /data/interviews to xlsx
 | 文件路径 | 完整绝对路径 |
 | 时长(秒) | ASR JSON |
 | 文件大小(MB) | 文件大小 |
-| 完整文本 | fun-asr 转写全文 |
+| 完整文本 | ASR 转写全文 |
 | 处理状态 | 成功 / 失败 |
 | 处理耗时(秒) | 单文件处理耗时 |
 | 错误信息 | 失败时的错误详情 |
@@ -86,7 +88,7 @@ Excel 输出带有蓝底白字表头、冻结首行、自动筛选。
 ### 文件命名
 
 ```
-ASR转写结果_{文件夹名}_{时间戳}.xlsx
+ASR转写结果_{文件夹名}_{后端}_{时间戳}.xlsx
 ```
 
 ## 支持的视频格式
@@ -142,7 +144,7 @@ fun-asr 模型对音频进行语音识别
 A: 不需要。`bl speech recognize` 直接接受视频文件，内部自动处理音轨，无质量损失，费用与纯音频相同。
 
 **Q: 如何收费？**
-A: fun-asr 有免费额度，超出后按音频时长计费。详见 [百炼模型定价](https://help.aliyun.com/zh/model-studio/model-pricing)。
+A: 两个后端均有免费额度，超出后按音频时长计费。详见 [百炼模型定价](https://help.aliyun.com/zh/model-studio/model-pricing)。
 
 **Q: 支持子文件夹吗？**
 A: 当前仅处理指定文件夹的顶层文件。嵌套文件夹请逐个运行。

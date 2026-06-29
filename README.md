@@ -1,8 +1,8 @@
 # bailian-echo
 
-> Batch speech-to-text for videos — zero config, one folder, structured Excel.
+> Batch speech-to-text for videos — dual backend (Bailian + Volcengine), one folder, structured Excel.
 
-**bailian-echo** is a Claude Code / Codex skill that turns a folder of videos into a formatted Excel report using Aliyun Bailian's [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model) model. Handles upload, transcription, timing, and error tracking end-to-end.
+**bailian-echo** is a Claude Code / Codex skill that turns a folder of videos into a formatted Excel report using Aliyun Bailian's [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model) or Volcengine Ark's [doubao-seed-asr](https://www.volcengine.com/docs/6561/1354868). Handles upload, transcription, timing, and error tracking end-to-end.
 
 ```
 📁 ~/Videos/interviews/
@@ -30,9 +30,13 @@
 | Dependency | Install |
 |------------|---------|
 | Node.js ≥ 22.12 | `brew install node` |
-| Bailian CLI | `npm install -g bailian-cli` |
-| Bailian Skills | `npx skills add modelstudioai/cli --all -g` |
 | Python openpyxl | `pip3 install openpyxl` |
+| **Bailian** (bl) | `npm install -g bailian-cli` |
+| Bailian Skills | `npx skills add modelstudioai/cli --all -g` |
+| **Volcengine** (ark) | `npm install -g @volcengine/ark-cli@latest` |
+| Ark Skills | `arkcli +connect` |
+
+> You only need **one** of the two CLI backends. Pick the one you have an account for.
 
 ### Install the Skill
 
@@ -42,25 +46,27 @@ npx skills add Rabbitmeaw/bailian-echo --all -g
 
 ### Authenticate
 
-The skill agent will guide you through authentication on first use:
+The skill agent guides you on first use. In short:
 
 ```bash
-# Desktop — one browser click
-bl auth login --console
+# Bailian (bl)
+bl auth login --console                    # browser login
+bl auth login --api-key sk-xxxxx           # or API key
+export DASHSCOPE_API_KEY="sk-xxxxx"        # or env var
 
-# Or with API key from https://bailian.console.aliyun.com
-bl auth login --api-key sk-xxxxx
-
-# Privacy tip: use env var (no plaintext on disk)
-export DASHSCOPE_API_KEY="sk-xxxxx"   # add to ~/.zshrc
+# Volcengine (ark)
+arkcli auth login                          # browser login
+export ARK_API_KEY="your-key"              # or env var
 ```
 
 ### Use
 
-In Claude Code or Codex, just talk naturally:
+In Claude Code or Codex, specify the backend naturally:
 
 ```
 Transcribe all videos in ~/Downloads/meetings to Excel
+帮我把 ./视频素材 转成文字，用百炼                # use bl
+帮我把 ./视频素材 转成文字，用火山引擎            # use ark
 ```
 
 ## Output
@@ -81,7 +87,7 @@ An Excel (`.xlsx`) or CSV file is generated in the source folder:
 ### Output Naming
 
 ```
-ASR转写结果_{folder_name}_{YYYYMMDD_HHMMSS}.xlsx
+ASR转写结果_{folder_name}_{backend}_{YYYYMMDD_HHMMSS}.xlsx
 ```
 
 ## Supported Video Formats
@@ -90,15 +96,15 @@ ASR转写结果_{folder_name}_{YYYYMMDD_HHMMSS}.xlsx
 
 Non-recursive — processes only top-level files in the given folder.
 
-## Authentication Methods
+## Backend Comparison
 
-The agent tries these in order:
-
-| Priority | Method | User Effort |
-|----------|--------|-------------|
-| 1 | `bl auth login --console` | Click once in browser |
-| 2 | `bl auth login --api-key` | Copy-paste a key |
-| 3 | `DASHSCOPE_API_KEY` env var | Edit shell config (optional, for privacy) |
+| | Bailian (bl) | Volcengine (ark) |
+|---|---|---|
+| Model | fun-asr | doubao-seed-asr |
+| CLI | `bl` | `arkcli` |
+| Auth env | `DASHSCOPE_API_KEY` | `ARK_API_KEY` |
+| API Key URL | [bailian.console](https://bailian.console.aliyun.com/cn-beijing/?tab=app#/api-key) | [ark console](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| File handling | Auto-upload to temp OSS | Direct multimodal input |
 
 ## How It Works
 
@@ -106,16 +112,14 @@ The agent tries these in order:
 Your video files
     │
     ▼
-bl CLI auto-uploads to DashScope temp OSS (48h expiry)
+CLI auto-uploads to cloud ASR service
     │
     ▼
-fun-asr model transcribes audio
+ASR model transcribes audio track
     │
     ▼
 Results collected → Excel/CSV written to source folder
 ```
-
-No OSS account needed. No manual file upload. Temp files auto-expire in 48 hours.
 
 ## FAQ
 
@@ -123,7 +127,7 @@ No OSS account needed. No manual file upload. Temp files auto-expire in 48 hours
 A: No. `bl speech recognize` accepts video files directly. Audio extraction is handled internally. No quality loss, no extra cost.
 
 **Q: Is there a cost?**
-A: fun-asr has a free tier. Beyond that, pricing is per audio-hour. See [Bailian pricing](https://help.aliyun.com/zh/model-studio/model-pricing).
+A: Both backends have free tiers. Bailian fun-asr pricing → [here](https://help.aliyun.com/zh/model-studio/model-pricing). Volcengine doubao-seed-asr pricing → [here](https://www.volcengine.com/docs/6561/1816214).
 
 **Q: Can I process subfolders?**
 A: Currently only top-level files in the specified folder. For nested folders, run the skill once per folder.
