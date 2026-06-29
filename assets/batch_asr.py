@@ -13,7 +13,6 @@
 
 依赖:
     - bl (bailian-cli) 已安装并已鉴权
-    - ffprobe (通常随 ffmpeg 安装)
     - Python 3.8+ / openpyxl
 """
 
@@ -42,34 +41,18 @@ ASR_TIMEOUT = 900
 # 工具函数
 # ═══════════════════════════════════════════════════════════════
 
-def get_duration_seconds(filepath: str) -> float | None:
-    """通过 ffprobe 获取音视频时长 (秒)。"""
-    try:
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-             '-of', 'json', filepath],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            return float(data['format']['duration'])
-    except Exception:
-        pass
-    return None
-
-
 def get_file_size_mb(filepath: str) -> float:
     """获取文件大小 (MB)。"""
     return os.path.getsize(filepath) / (1024 * 1024)
 
 
-def run_asr(filepath: str) -> tuple[str | None, str | None]:
+def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
     """
     调用 bl speech recognize 转写单个文件。
 
-    返回 (text, error)。
-    成功时 text 为转写全文，error 为 None；
-    失败时 text 为 None，error 为错误信息。
+    返回 (text, duration_seconds, error)。
+    成功时 text 为转写全文，duration_seconds 为音频时长，error 为 None；
+    失败时 text/duration 为 None，error 为错误信息。
     """
     with tempfile.NamedTemporaryFile(
         suffix='.json', prefix='asr_', delete=False
@@ -86,31 +69,36 @@ def run_asr(filepath: str) -> tuple[str | None, str | None]:
         if result.returncode != 0:
             # 尝试从 stderr 提取有用信息
             err = result.stderr.strip() or result.stdout.strip()
-            return None, err[:500] if err else f'退出码 {result.returncode}'
+            return None, None, err[:500] if err else f'退出码 {result.returncode}'
 
         # 读取结构化 JSON
         with open(tmp_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
+        # 音频时长从 ASR 返回的 JSON 中获取（无需 ffprobe）
+        props = data.get('properties', {})
+        duration_ms = props.get('original_duration_in_milliseconds')
+        duration_s = duration_ms / 1000.0 if duration_ms else None
+
         transcripts = data.get('transcripts', [])
         if not transcripts:
-            return None, 'ASR 返回了空结果（可能文件中没有语音）'
+            return None, duration_s, 'ASR 返回了空结果（可能文件中没有语音）'
 
         # 合并所有 channel 的文本
         texts = [t.get('text', '') for t in transcripts]
         full_text = '\n'.join(texts).strip()
 
         if not full_text:
-            return None, 'ASR 返回了空文本'
+            return None, duration_s, 'ASR 返回了空文本'
 
-        return full_text, None
+        return full_text, duration_s, None
 
     except subprocess.TimeoutExpired:
-        return None, f'ASR 处理超时 (>{ASR_TIMEOUT}s)'
+        return None, None, f'ASR 处理超时 (>{ASR_TIMEOUT}s)'
     except json.JSONDecodeError as e:
-        return None, f'JSON 解析失败: {e}'
+        return None, None, f'JSON 解析失败: {e}'
     except Exception as e:
-        return None, f'未知错误: {e}'
+        return None, None, f'未知错误: {e}'
     finally:
         # 清理临时 JSON 文件
         try:
@@ -274,17 +262,14 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
 
         task_start = time.time()
 
-        # ── 获取文件元信息 ──
-        entry['时长(秒)'] = get_duration_seconds(str(filepath))
+        # ── 获取文件大小 ──
         entry['文件大小(MB)'] = round(get_file_size_mb(str(filepath)), 2)
 
-        # ── 无音轨检测 ──
-        # (ffprobe 仍会返回时长，这里仅做快速跳过——实际由 ASR 返回结果决定)
-
-        # ── ASR 转写 ──
-        text, error = run_asr(str(filepath))
+        # ── ASR 转写（时长从 ASR 返回的 JSON 中提取，无需 ffprobe）──
+        text, duration_s, error = run_asr(str(filepath))
         elapsed = round(time.time() - task_start, 1)
         entry['处理耗时(秒)'] = elapsed
+        entry['时长(秒)'] = round(duration_s, 2) if duration_s else None
 
         if text:
             entry['完整文本'] = text

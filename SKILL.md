@@ -4,7 +4,6 @@ metadata:
   version: "1.0.0"
   requires:
     - bailian-cli (>= 1.4.0, 已鉴权)
-    - ffprobe (随 ffmpeg 安装)
     - Python 3.8+ / openpyxl
 description: >-
   Batch video/audio speech-to-text using Aliyun Model Studio fun-asr.
@@ -125,19 +124,7 @@ export DASHSCOPE_API_KEY="<Key>"   # 写入 ~/.zshrc 持久化，或仅当前 sh
 
 设置后 `bl` CLI 优先读环境变量，可删除 `~/.bailian/config.json` 中的 `api_key` 字段。
 
-### 0.6 ffprobe
-
-```bash
-ffprobe -version
-```
-
-未安装：
-- macOS: `brew install ffmpeg`
-- Linux (Debian/Ubuntu): `sudo apt install ffmpeg`
-- Linux (RHEL/Fedora): `sudo dnf install ffmpeg`
-- Windows: `winget install ffmpeg`
-
-### 0.7 Python openpyxl
+### 0.6 Python openpyxl
 
 ```bash
 python3 -c "import openpyxl; print(openpyxl.__version__)"
@@ -148,16 +135,15 @@ python3 -c "import openpyxl; print(openpyxl.__version__)"
 pip3 install openpyxl
 ```
 
-### 0.8 最小功能验证（全部通过后方可进入 Phase 1）
+### 0.7 最小功能验证（全部通过后方可进入 Phase 1）
 
 ```bash
 bl auth status --output json | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['authenticated'] and d['api_key']['configured'], 'AUTH FAILED'"
-ffprobe -version > /dev/null
 python3 -c "import openpyxl"
 echo "ALL CHECKS PASSED"
 ```
 
-验证项：鉴权通过 + API Key 已配置 + ffprobe 可用 + openpyxl 可导入。
+验证项：鉴权通过 + API Key 已配置 + openpyxl 可导入。
 
 ---
 
@@ -213,7 +199,7 @@ Agent 应在终端中执行此命令，等待完成，检查退出码。
 |------|------|
 | 文件名 | 原始文件名 |
 | 文件路径 | 绝对路径 |
-| 时长(秒) | ffprobe |
+| 时长(秒) | ASR 返回的 `original_duration_in_milliseconds` |
 | 文件大小(MB) | os.stat |
 | 完整文本 | fun-asr 转写 |
 | 处理状态 | 成功 / 失败 |

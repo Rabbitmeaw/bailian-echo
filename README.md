@@ -32,7 +32,6 @@
 | Node.js ≥ 22.12 | `brew install node` |
 | Bailian CLI | `npm install -g bailian-cli` |
 | Bailian Skills | `npx skills add modelstudioai/cli --all -g` |
-| ffprobe | `brew install ffmpeg` |
 | Python openpyxl | `pip3 install openpyxl` |
 
 ### Install the Skill
@@ -72,7 +71,7 @@ An Excel (`.xlsx`) or CSV file is generated in the source folder:
 |--------|--------|
 | Filename | Original filename |
 | File Path | Absolute path |
-| Duration (s) | ffprobe |
+| Duration (s) | ASR JSON |
 | File Size (MB) | os.stat |
 | Full Text | fun-asr transcription |
 | Status | Success / Fail |
@@ -120,8 +119,8 @@ No OSS account needed. No manual file upload. Temp files auto-expire in 48 hours
 
 ## FAQ
 
-**Q: Do I need ffmpeg to extract audio?**
-A: No. `bl speech recognize` accepts video files directly — it handles audio extraction internally. No quality loss, no extra cost.
+**Q: Do I need to extract audio first?**
+A: No. `bl speech recognize` accepts video files directly. Audio extraction is handled internally. No quality loss, no extra cost.
 
 **Q: Is there a cost?**
 A: fun-asr has a free tier. Beyond that, pricing is per audio-hour. See [Bailian pricing](https://help.aliyun.com/zh/model-studio/model-pricing).
@@ -133,7 +132,7 @@ A: Currently only top-level files in the specified folder. For nested folders, r
 A: The script marks it as "失败" (failed) with the reason "ASR 返回了空结果". Other files continue.
 
 **Q: Does it work on Windows?**
-A: Yes. Uses Python `pathlib` and standard subprocess calls. ffmpeg via `winget install ffmpeg`.
+A: Yes. Uses Python `pathlib` and standard subprocess calls.
 
 ## License
 
