@@ -39,7 +39,7 @@ DEFAULT_CONCURRENCY = 3
 
 FIELD_NAMES = [
     '文件名', '文件路径', '时长(秒)', '文件大小(MB)',
-    '完整文本', '处理状态', '处理耗时(秒)', '错误信息',
+    '完整文本', '带时间码文本', '处理状态', '处理耗时(秒)', '错误信息',
 ]
 
 
@@ -47,8 +47,24 @@ def get_file_size_mb(filepath: str) -> float:
     return os.path.getsize(filepath) / (1024 * 1024)
 
 
-def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
-    """调用 bl speech recognize，返回 (text, duration_s, error)。"""
+def _ms_to_ts(ms: int) -> str:
+    """毫秒 → MM:SS.ms 时间戳"""
+    s = ms / 1000.0
+    return f"{int(s // 60):02d}:{s % 60:05.2f}"
+
+
+def _build_timed_text(sentences: list[dict]) -> str:
+    """将句级时间码拼接为带时间戳文本。"""
+    lines = []
+    for s in sentences:
+        bt = _ms_to_ts(s.get('begin_time', 0))
+        et = _ms_to_ts(s.get('end_time', 0))
+        lines.append(f"[{bt}→{et}] {s.get('text', '')}")
+    return '\n'.join(lines)
+
+
+def run_asr(filepath: str) -> tuple[str | None, float | None, str | None, list[dict] | None]:
+    """调用 bl speech recognize，返回 (text, duration_s, error, sentences)。"""
     with tempfile.NamedTemporaryFile(suffix='.json', prefix='asr_', delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -60,7 +76,7 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
         )
         if result.returncode != 0:
             err = result.stderr.strip() or result.stdout.strip()
-            return None, None, err[:500] if err else f'exit {result.returncode}'
+            return None, None, err[:500] if err else f'exit {result.returncode}', None
 
         with open(tmp_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -71,21 +87,22 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
 
         transcripts = data.get('transcripts', [])
         if not transcripts:
-            return None, duration_s, 'ASR 返回空结果（文件中可能没有语音）'
+            return None, duration_s, 'ASR 返回空结果（文件中可能没有语音）', None
 
         texts = [t.get('text', '') for t in transcripts]
         full_text = '\n'.join(texts).strip()
         if not full_text:
-            return None, duration_s, 'ASR 返回空文本'
+            return None, duration_s, 'ASR 返回空文本', None
 
-        return full_text, duration_s, None
+        sentences = transcripts[0].get('sentences', [])
+        return full_text, duration_s, None, sentences
 
     except subprocess.TimeoutExpired:
-        return None, None, f'ASR 超时 (>{ASR_TIMEOUT}s)'
+        return None, None, f'ASR 超时 (>{ASR_TIMEOUT}s)', None
     except json.JSONDecodeError as e:
-        return None, None, f'JSON 解析失败: {e}'
+        return None, None, f'JSON 解析失败: {e}', None
     except Exception as e:
-        return None, None, f'未知错误: {e}'
+        return None, None, f'未知错误: {e}', None
     finally:
         try:
             os.unlink(tmp_path)
@@ -98,18 +115,22 @@ def process_single_file(filepath: Path) -> dict:
     entry = dict.fromkeys(FIELD_NAMES, '')
     entry.update({'文件名': filepath.name, '文件路径': str(filepath),
                    '时长(秒)': None, '文件大小(MB)': None,
-                   '完整文本': '', '处理状态': '处理中',
+                   '完整文本': '', '带时间码文本': '', '处理状态': '处理中',
                    '处理耗时(秒)': None, '错误信息': ''})
 
     t0 = time.time()
     entry['文件大小(MB)'] = round(get_file_size_mb(str(filepath)), 2)
 
-    text, duration_s, error = run_asr(str(filepath))
+    text, duration_s, error, sentences = run_asr(str(filepath))
     entry['处理耗时(秒)'] = round(time.time() - t0, 1)
     entry['时长(秒)'] = round(duration_s, 2) if duration_s else None
 
     if text:
         entry['完整文本'] = text
+        if sentences:
+            entry['带时间码文本'] = _build_timed_text(sentences)
+        else:
+            entry['带时间码文本'] = text
         entry['处理状态'] = '成功'
     else:
         entry['处理状态'] = '失败'
@@ -154,7 +175,7 @@ def save_xlsx(results: list[dict], output_path: str) -> None:
                 cell.font = Font(color='006100' if value == '成功' else 'FF0000', bold=True)
 
     widths = {'文件名': 42, '文件路径': 64, '时长(秒)': 11, '文件大小(MB)': 13,
-              '完整文本': 72, '处理状态': 10, '处理耗时(秒)': 13, '错误信息': 44}
+              '完整文本': 72, '带时间码文本': 72, '处理状态': 10, '处理耗时(秒)': 13, '错误信息': 44}
     for col, name in enumerate(FIELD_NAMES, 1):
         ws.column_dimensions[get_column_letter(col)].width = widths.get(name, 14)
 
@@ -231,7 +252,7 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
                     '文件名': video_files[idx].name,
                     '文件路径': str(video_files[idx]),
                     '时长(秒)': None, '文件大小(MB)': None,
-                    '完整文本': '', '处理状态': '失败',
+                    '完整文本': '', '带时间码文本': '', '处理状态': '失败',
                     '处理耗时(秒)': None, '错误信息': f'线程异常: {e}',
                 })
 

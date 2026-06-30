@@ -140,7 +140,8 @@ python3 <skill_dir>/assets/batch_asr.py \
 | 文件路径 | 绝对路径 |
 | 时长(秒) | ASR JSON `original_duration_in_milliseconds` |
 | 文件大小(MB) | os.stat |
-| 完整文本 | fun-asr 转写 |
+| 完整文本 | fun-asr 转写全文 |
+| 带时间码文本 | 句级时间戳 `[MM:SS.ms→MM:SS.ms] 文本` |
 | 处理状态 | 成功 / 失败 |
 | 处理耗时(秒) | 计时 |
 | 错误信息 | 失败时 |
