@@ -55,15 +55,38 @@ bl auth login --api-key sk-xxxxx
 export DASHSCOPE_API_KEY="sk-xxxxx"   # ~/.zshrc
 ```
 
-### Use
+## Usage
+
+### Batch Mode (folder → Excel/CSV)
 
 ```
 Transcribe all videos in ~/Downloads/meetings to Excel
 帮我把 ./视频素材 里的视频全部转成文字
-批量转写 ~/Desktop/录屏 输出 csv
+批量转写 ~/Desktop/录屏 输出 csv，5 并发
+```
+
+```bash
+python3 batch_asr.py --folder ~/Videos/meetings
+python3 batch_asr.py --folder ~/Videos/meetings --format csv
+python3 batch_asr.py --folder ~/Videos/meetings --concurrency 5
+```
+
+### Single-File Mode (video → plain text / timed text)
+
+```bash
+# Plain full text → stdout
+python3 batch_asr.py --file meeting.mp4
+
+# Sentence-level timestamps → stdout
+python3 batch_asr.py --file meeting.mp4 --timed
+
+# Save to file
+python3 batch_asr.py --file meeting.mp4 --timed -o transcript.txt
 ```
 
 ## Output
+
+9 columns for batch mode:
 
 | Column | Source |
 |--------|--------|
@@ -72,9 +95,14 @@ Transcribe all videos in ~/Downloads/meetings to Excel
 | Duration (s) | ASR JSON `original_duration_in_milliseconds` |
 | File Size (MB) | os.stat |
 | Full Text | fun-asr transcription |
+| Timed Text | `[MM:SS.ms→MM:SS.ms] sentence text` per line |
 | Status | Success / Fail |
 | Elapsed (s) | Per-file timing |
 | Error | Failure details |
+
+Excel: blue header, frozen first row, auto-filter.
+
+Results saved incrementally — each file written to disk as it completes. Interruption-safe.
 
 Output: `ASR转写结果_{folder}_{timestamp}.xlsx` (or `.csv`) in the source folder.
 
@@ -97,6 +125,15 @@ No OSS account needed. No manual upload. No ffmpeg. One dependency: `bl`.
 
 **Q: Do I need to extract audio first?**
 A: No. `bl speech recognize` accepts video files directly.
+
+**Q: Can I get subtitles with timestamps?**
+A: Yes. The **Timed Text** column includes sentence-level `[MM:SS.ms→MM:SS.ms]` timestamps. For single files, use `--timed` to print timestamped text directly.
+
+**Q: How fast is it?**
+A: Default 3 concurrent files. With `--concurrency N` you can speed up large batches.
+
+**Q: What if the process is interrupted mid-batch?**
+A: Results are saved after each file. Completed files are preserved.
 
 **Q: Is there a cost?**
 A: fun-asr has a free tier. Paid beyond that → [pricing](https://help.aliyun.com/zh/model-studio/model-pricing).

@@ -59,13 +59,36 @@ export DASHSCOPE_API_KEY="sk-xxxxx"   # ~/.zshrc
 
 ### 使用
 
+#### 批量模式（文件夹 → Excel/CSV）
+
 ```
 帮我把 ~/Downloads/会议录屏 里的视频全部转成文字 Excel
-批量提取 ./视频素材 转文字，输出 csv
+批量提取 ./视频素材 转文字，输出 csv，5 并发
 transcribe all videos in /data/interviews to xlsx
 ```
 
+```bash
+python3 batch_asr.py --folder ~/Videos/会议录屏
+python3 batch_asr.py --folder ~/Videos/会议录屏 --format csv
+python3 batch_asr.py --folder ~/Videos/会议录屏 --concurrency 5
+```
+
+#### 单文件模式（视频 → 纯文本 / 带时间码）
+
+```bash
+# 纯文本输出到终端
+python3 batch_asr.py --file 周会.mp4
+
+# 带句级时间码输出
+python3 batch_asr.py --file 周会.mp4 --timed
+
+# 保存到文件
+python3 batch_asr.py --file 周会.mp4 --timed -o 字幕.txt
+```
+
 ## 输出格式
+
+批量模式输出 9 列：
 
 | 列名 | 来源 |
 |------|------|
@@ -74,11 +97,14 @@ transcribe all videos in /data/interviews to xlsx
 | 时长(秒) | ASR JSON |
 | 文件大小(MB) | 文件大小 |
 | 完整文本 | fun-asr 转写全文 |
+| 带时间码文本 | `[MM:SS.ms→MM:SS.ms] 句子` 逐句时间戳 |
 | 处理状态 | 成功 / 失败 |
 | 处理耗时(秒) | 单文件耗时 |
 | 错误信息 | 失败原因 |
 
 Excel 输出：蓝底白字表头、冻结首行、自动筛选。
+
+每完成一个文件立即落盘，中途中断不丢已完成数据。
 
 文件命名：`ASR转写结果_{文件夹名}_{时间戳}.xlsx`（或 `.csv`），默认在源文件夹中。
 
@@ -101,6 +127,15 @@ Excel 输出：蓝底白字表头、冻结首行、自动筛选。
 
 **Q: 需要先提取音频吗？**
 A: 不需要。直接喂视频，内部自动处理音轨。
+
+**Q: 能输出带时间码的字幕吗？**
+A: 可以。批量 Excel 中「带时间码文本」列包含逐句 `[MM:SS.ms→MM:SS.ms]`。单文件用 `--timed` 直接输出。
+
+**Q: 处理速度如何？**
+A: 默认 3 并发。`--concurrency N` 可加速大批量处理。
+
+**Q: 中途中断会丢数据吗？**
+A: 不会。每完成一个文件立即写入 Excel/CSV，已完成部分保留。
 
 **Q: 如何收费？**
 A: fun-asr 有免费额度，超出按音频时长计费 → [定价](https://help.aliyun.com/zh/model-studio/model-pricing)。
