@@ -113,12 +113,14 @@ echo "ALL CHECKS PASSED"
 | `--folder` | 用户提供的文件夹路径 | **必填** |
 | `--format` | 用户说 "csv" → csv | xlsx |
 | `--output` | 用户指定 | 源文件夹内自动命名 |
+| `--concurrency` | 用户说 "并行"/"加速"/"--concurrency N" | 3 |
 
 ```bash
 python3 <skill_dir>/assets/batch_asr.py \
   --folder "<路径>" \
   --format <xlsx|csv> \
-  [--output "<路径>"]
+  [--output "<路径>"] \
+  [--concurrency <N>]
 ```
 
 ---

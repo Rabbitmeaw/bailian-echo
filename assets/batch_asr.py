@@ -3,13 +3,14 @@
 批量视频 ASR 转写工具 — 基于阿里云百炼 CLI (bl speech recognize / fun-asr)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-遍历指定文件夹中的视频文件，逐一转写为文字，
+遍历指定文件夹中的视频文件，并行转写为文字，
 输出 Excel (.xlsx) 或 CSV 文件。
+每完成一个文件立即落盘，中断不丢数据。
 
 用法:
     python3 batch_asr.py --folder /path/to/videos
     python3 batch_asr.py --folder /path/to/videos --format csv
-    python3 batch_asr.py --folder /path/to/videos --output /path/to/result.xlsx
+    python3 batch_asr.py --folder /path/to/videos --concurrency 5
 
 依赖:
     - bl (bailian-cli) 已安装并已鉴权
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +35,7 @@ VIDEO_EXTENSIONS = {
 }
 
 ASR_TIMEOUT = 900
+DEFAULT_CONCURRENCY = 3
 
 FIELD_NAMES = [
     '文件名', '文件路径', '时长(秒)', '文件大小(MB)',
@@ -88,6 +91,31 @@ def run_asr(filepath: str) -> tuple[str | None, float | None, str | None]:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def process_single_file(filepath: Path) -> dict:
+    """处理单个视频文件，返回 entry dict（供线程池调用）。"""
+    entry = dict.fromkeys(FIELD_NAMES, '')
+    entry.update({'文件名': filepath.name, '文件路径': str(filepath),
+                   '时长(秒)': None, '文件大小(MB)': None,
+                   '完整文本': '', '处理状态': '处理中',
+                   '处理耗时(秒)': None, '错误信息': ''})
+
+    t0 = time.time()
+    entry['文件大小(MB)'] = round(get_file_size_mb(str(filepath)), 2)
+
+    text, duration_s, error = run_asr(str(filepath))
+    entry['处理耗时(秒)'] = round(time.time() - t0, 1)
+    entry['时长(秒)'] = round(duration_s, 2) if duration_s else None
+
+    if text:
+        entry['完整文本'] = text
+        entry['处理状态'] = '成功'
+    else:
+        entry['处理状态'] = '失败'
+        entry['错误信息'] = error or '未知错误'
+
+    return entry
 
 
 # ═══════════════════════════════════════════════════
@@ -154,7 +182,8 @@ def save_csv(results: list[dict], output_path: str) -> None:
 # ═══════════════════════════════════════════════════
 
 def process_folder(folder_path: str, output_format: str = 'xlsx',
-                   output_path: str | None = None) -> None:
+                   output_path: str | None = None,
+                   concurrency: int = DEFAULT_CONCURRENCY) -> None:
     folder = Path(folder_path).resolve()
     if not folder.is_dir():
         print(f'❌ 错误：{folder_path} 不是有效目录')
@@ -177,47 +206,53 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
         output_path = str(Path(output_path).resolve())
 
     total = len(video_files)
+    workers = min(concurrency, total)
     print(f'\n📁 {folder}')
-    print(f'🎬 {total} 个视频  |  📄 {output_format.upper()} → {output_path}')
+    print(f'🎬 {total} 个视频  |  ⚡ {workers} 并发  |  📄 {output_format.upper()} → {output_path}')
     print(f'{"─" * 60}\n')
 
-    results, overall_start = [], time.time()
+    # 预分配结果槽位，按原始文件顺序
+    results: list[dict | None] = [None] * total
+    overall_start = time.time()
 
-    for idx, filepath in enumerate(video_files, 1):
-        print(f'[{idx}/{total}] {filepath.name}', end=' ', flush=True)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_idx = {
+            executor.submit(process_single_file, fp): i
+            for i, fp in enumerate(video_files)
+        }
 
-        entry = dict.fromkeys(FIELD_NAMES, '')
-        entry.update({'文件名': filepath.name, '文件路径': str(filepath),
-                       '时长(秒)': None, '文件大小(MB)': None,
-                       '完整文本': '', '处理状态': '处理中',
-                       '处理耗时(秒)': None, '错误信息': ''})
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                entry = future.result()
+            except Exception as e:
+                entry = dict.fromkeys(FIELD_NAMES, '')
+                entry.update({
+                    '文件名': video_files[idx].name,
+                    '文件路径': str(video_files[idx]),
+                    '时长(秒)': None, '文件大小(MB)': None,
+                    '完整文本': '', '处理状态': '失败',
+                    '处理耗时(秒)': None, '错误信息': f'线程异常: {e}',
+                })
 
-        t0 = time.time()
-        entry['文件大小(MB)'] = round(get_file_size_mb(str(filepath)), 2)
+            results[idx] = entry
+            completed_count = sum(1 for r in results if r is not None)
 
-        text, duration_s, error = run_asr(str(filepath))
-        entry['处理耗时(秒)'] = round(time.time() - t0, 1)
-        entry['时长(秒)'] = round(duration_s, 2) if duration_s else None
+            status_icon = '✅' if entry['处理状态'] == '成功' else '❌'
+            err_suffix = ''
+            if entry['错误信息']:
+                err_suffix = f' — {entry["错误信息"][:60]}'
+            print(f'[{completed_count}/{total}] {entry["文件名"]} {status_icon} {entry["处理耗时(秒)"]}s{err_suffix}')
 
-        if text:
-            entry['完整文本'] = text
-            entry['处理状态'] = '成功'
-            print(f'✅ {entry["处理耗时(秒)"]}s')
-        else:
-            entry['处理状态'] = '失败'
-            entry['错误信息'] = error or '未知错误'
-            print(f'❌ {(error or "未知错误")[:80]}')
+            # 增量落盘：保留原始顺序，仅写已完成条目
+            completed = [r for r in results if r is not None]
+            if output_format == 'xlsx':
+                save_xlsx(completed, output_path)
+            else:
+                save_csv(completed, output_path)
 
-        results.append(entry)
-
-        # 每完成一个文件立即落盘，防止中途欠费/断网/崩溃导致已处理结果丢失
-        if output_format == 'xlsx':
-            save_xlsx(results, output_path)
-        else:
-            save_csv(results, output_path)
-
-    success = sum(1 for r in results if r['处理状态'] == '成功')
-    total_dur = sum((r['时长(秒)'] or 0) for r in results if r['处理状态'] == '成功')
+    success = sum(1 for r in results if r and r['处理状态'] == '成功')
+    total_dur = sum((r['时长(秒)'] or 0) for r in results if r and r['处理状态'] == '成功')
 
     print(f'\n{"═" * 60}')
     print(f'✅ {success}  /  ❌ {total - success}  /  📦 {total}')
@@ -232,8 +267,10 @@ def main():
     parser.add_argument('--folder', '-f', required=True)
     parser.add_argument('--format', '-fmt', choices=['xlsx', 'csv'], default='xlsx')
     parser.add_argument('--output', '-o', default=None)
+    parser.add_argument('--concurrency', '-c', type=int, default=DEFAULT_CONCURRENCY,
+                        help=f'并发数（默认 {DEFAULT_CONCURRENCY}）')
     args = parser.parse_args()
-    process_folder(args.folder, args.format, args.output)
+    process_folder(args.folder, args.format, args.output, args.concurrency)
 
 
 if __name__ == '__main__':
