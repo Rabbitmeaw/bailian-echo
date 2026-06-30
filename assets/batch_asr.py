@@ -282,16 +282,60 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
     print(f'{"═" * 60}')
 
 
+def process_single(filepath: str, timed: bool = False,
+                   output_path: str | None = None) -> None:
+    """单文件转写，输出纯文本或带时间码文本。"""
+    fp = Path(filepath).resolve()
+    if not fp.is_file():
+        print(f'❌ 错误：{filepath} 不是有效文件')
+        sys.exit(1)
+
+    print(f'🎬 {fp.name}', end=' ', flush=True)
+    t0 = time.time()
+
+    text, duration_s, error, sentences = run_asr(str(fp))
+    elapsed = time.time() - t0
+
+    if error:
+        print(f'❌ {error[:80]}')
+        sys.exit(1)
+
+    duration_str = f'{duration_s:.0f}s' if duration_s else '?s'
+    print(f'✅ {elapsed:.1f}s  |  🎵 {duration_str}')
+
+    if timed and sentences:
+        out = _build_timed_text(sentences)
+    else:
+        out = text or ''
+
+    if output_path:
+        Path(output_path).resolve().parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(out)
+        print(f'📄 → {output_path}')
+    else:
+        print(f'\n{out}')
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='批量视频 ASR 转写 — 阿里云百炼 fun-asr')
-    parser.add_argument('--folder', '-f', required=True)
-    parser.add_argument('--format', '-fmt', choices=['xlsx', 'csv'], default='xlsx')
-    parser.add_argument('--output', '-o', default=None)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--folder', '-f', help='视频文件夹路径（批量模式）')
+    group.add_argument('--file', '-i', help='单个视频文件路径（单文件模式）')
+    parser.add_argument('--format', '-fmt', choices=['xlsx', 'csv'], default='xlsx',
+                        help='批量输出格式（默认 xlsx）')
+    parser.add_argument('--output', '-o', default=None,
+                        help='输出路径（批量: xlsx/csv；单文件: txt）')
+    parser.add_argument('--timed', '-t', action='store_true',
+                        help='单文件模式：输出带时间码文本（默认纯文本）')
     parser.add_argument('--concurrency', '-c', type=int, default=DEFAULT_CONCURRENCY,
-                        help=f'并发数（默认 {DEFAULT_CONCURRENCY}）')
+                        help=f'批量并发数（默认 {DEFAULT_CONCURRENCY}）')
     args = parser.parse_args()
-    process_folder(args.folder, args.format, args.output, args.concurrency)
+    if args.file:
+        process_single(args.file, args.timed, args.output)
+    else:
+        process_folder(args.folder, args.format, args.output, args.concurrency)
 
 
 if __name__ == '__main__':

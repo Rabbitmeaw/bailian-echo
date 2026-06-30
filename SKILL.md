@@ -106,7 +106,11 @@ echo "ALL CHECKS PASSED"
 
 ---
 
-## Phase 1：执行转写
+## Phase 1：确定参数 & 执行转写
+
+环境就绪后，从用户输入中提取参数。
+
+### 批量模式（`--folder`）
 
 | 参数 | 来源 | 默认值 |
 |------|------|--------|
@@ -121,6 +125,27 @@ python3 <skill_dir>/assets/batch_asr.py \
   --format <xlsx|csv> \
   [--output "<路径>"] \
   [--concurrency <N>]
+```
+
+### 单文件模式（`--file`）
+
+用户指定单个视频文件时使用。输出纯文本到终端或文件。
+
+| 参数 | 说明 |
+|------|------|
+| `--file` / `-i` | 单个视频文件路径 |
+| `--timed` / `-t` | 输出带 `[MM:SS.ms→MM:SS.ms]` 时间码文本 |
+| `--output` / `-o` | 保存到文件（默认打印到终端） |
+
+```bash
+# 纯文本（终端输出）
+python3 <skill_dir>/assets/batch_asr.py --file video.mp4
+
+# 带时间码（终端输出）
+python3 <skill_dir>/assets/batch_asr.py --file video.mp4 --timed
+
+# 带时间码保存到文件
+python3 <skill_dir>/assets/batch_asr.py --file video.mp4 --timed -o result.txt
 ```
 
 ---
