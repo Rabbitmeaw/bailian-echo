@@ -1,5 +1,7 @@
 # bailian-echo
 
+[**English**](README.md) | [**中文**](README.zh.md)
+
 > Batch speech-to-text for videos — one folder in, one Excel out.
 
 **bailian-echo** is a Claude Code / Codex skill that turns a folder of videos into a formatted Excel report using Aliyun Bailian's [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model). Handles upload, transcription, timing, and error tracking end-to-end.
@@ -20,8 +22,6 @@
       │          │          │      │  episode..."│
       └──────────┴──────────┴──────┴─────────────┘
 ```
-
-- [中文文档](README.zh.md)
 
 ## Quick Start
 

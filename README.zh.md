@@ -1,5 +1,7 @@
 # bailian-echo（百炼·回声）
 
+[**English**](README.md) | [**中文**](README.zh.md)
+
 > 批量视频语音转文字 — 一个文件夹进，一份 Excel 出。
 
 **bailian-echo** 是一个 Claude Code / Codex Skill，基于阿里云百炼 [fun-asr](https://help.aliyun.com/zh/model-studio/asr-model)，将视频文件夹批量转为结构化文字报表。上传、转写、计时、异常处理全链路自动化。
