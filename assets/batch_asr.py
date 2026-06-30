@@ -210,10 +210,11 @@ def process_folder(folder_path: str, output_format: str = 'xlsx',
 
         results.append(entry)
 
-    if output_format == 'xlsx':
-        save_xlsx(results, output_path)
-    else:
-        save_csv(results, output_path)
+        # 每完成一个文件立即落盘，防止中途欠费/断网/崩溃导致已处理结果丢失
+        if output_format == 'xlsx':
+            save_xlsx(results, output_path)
+        else:
+            save_csv(results, output_path)
 
     success = sum(1 for r in results if r['处理状态'] == '成功')
     total_dur = sum((r['时长(秒)'] or 0) for r in results if r['处理状态'] == '成功')
